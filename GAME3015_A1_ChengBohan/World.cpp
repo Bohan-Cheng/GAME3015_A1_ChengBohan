@@ -50,6 +50,8 @@ void World::buildWorld()
 
 void World::Update(const GameTimer& gt)
 {
+	jet->Update(gt);
+	enemy->Update(gt);
 
 	jet->Ritem = std::make_unique<RenderItem>();
 	XMStoreFloat4x4(&jet->Ritem->World, XMMatrixScaling(jet->Scale.x, jet->Scale.y, jet->Scale.z) * XMMatrixTranslation(jet->Position.x, jet->Position.y, jet->Position.z));
@@ -63,6 +65,4 @@ void World::Update(const GameTimer& gt)
 
 	//XMStoreFloat4x4(&jet->Ritem->World, XMMatrixScaling(0,0,0) * XMMatrixTranslation(0,0,0));
 	//mAllRitems.push_back(std::move(jet->Ritem));
-	jet->Update(gt);
-	enemy->Update(gt);
 }

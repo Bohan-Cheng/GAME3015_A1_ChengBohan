@@ -99,6 +99,8 @@ void Game::Update(const GameTimer& gt)
 	UpdateObjectCBs(gt);
 	UpdateMaterialCBs(gt);
 	UpdateMainPassCB(gt);
+	world->mAllRitems.pop_back();
+	world->mAllRitems.pop_back();
 }
 
 void Game::Draw(const GameTimer& gt)
