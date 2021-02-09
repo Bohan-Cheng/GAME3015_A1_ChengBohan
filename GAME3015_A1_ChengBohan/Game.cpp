@@ -1,126 +1,4 @@
-#include "Common/d3dApp.h"
-#include "Common/MathHelper.h"
-#include "Common/UploadBuffer.h"
-#include "Common/GeometryGenerator.h"
-#include "FrameResource.h"
-
-using Microsoft::WRL::ComPtr;
-using namespace DirectX;
-using namespace DirectX::PackedVector;
-
-#pragma comment(lib, "d3dcompiler.lib")
-#pragma comment(lib, "D3D12.lib")
-
-const int gNumFrameResources = 3;
-
-struct RenderItem
-{
-	RenderItem() = default;
-	XMFLOAT4X4 World = MathHelper::Identity4x4();
-	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
-	int NumFramesDirty = gNumFrameResources;
-	UINT ObjCBIndex = -1;
-	Material* Mat = nullptr;
-	MeshGeometry* Geo = nullptr;
-	D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	UINT IndexCount = 0;
-	UINT StartIndexLocation = 0;
-	int BaseVertexLocation = 0;
-};
-
-enum class RenderLayer : int
-{
-	Opaque = 0,
-	Transparent,
-	AlphaTested,
-	Count
-};
-
-class A1App : public D3DApp
-{
-public:
-	A1App(HINSTANCE hInstance);
-	A1App(const A1App& rhs) = delete;
-	A1App& operator=(const A1App& rhs) = delete;
-	~A1App();
-
-	virtual bool Initialize()override;
-
-private:
-	virtual void OnResize()override;
-	virtual void Update(const GameTimer& gt)override;
-	virtual void Draw(const GameTimer& gt)override;
-
-	virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
-	virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
-	virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
-
-	void OnKeyboardInput(const GameTimer& gt);
-	void UpdateCamera(const GameTimer& gt);
-	void UpdateObjectCBs(const GameTimer& gt);
-	void UpdateMaterialCBs(const GameTimer& gt);
-	void UpdateMainPassCB(const GameTimer& gt);
-
-	void LoadTextures();
-	void BuildRootSignature();
-	void BuildDescriptorHeaps();
-	void BuildShadersAndInputLayout();
-
-	void helpBuildSubMesh(GeometryGenerator::MeshData name,
-		SubmeshGeometry& subName,
-		UINT nameVertexOffset,
-		UINT nameIndexOffset);
-
-	void BuildShapeGeometry();
-	void BuildShapeRenderItems();
-	void BuildPSOs();
-	void BuildFrameResources();
-	void BuildMaterials();
-	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-
-	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
-
-	float GetHillsHeight(float x, float z)const;
-	XMFLOAT3 GetHillsNormal(float x, float z)const;
-
-private:
-
-	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
-	FrameResource* mCurrFrameResource = nullptr;
-	int mCurrFrameResourceIndex = 0;
-
-	UINT mCbvSrvDescriptorSize = 0;
-
-	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
-
-	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
-
-	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
-	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
-	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
-	std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders;
-	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
-
-	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
-
-	// List of all the render items.
-	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
-
-	// Render items divided by PSO.
-	std::vector<RenderItem*> mRitemLayer[(int)RenderLayer::Count];
-
-	PassConstants mMainPassCB;
-
-	XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
-
-	float mTheta = 1.5f * XM_PI;
-	float mPhi = XM_PIDIV2 - 0.1f;
-	float mRadius = 50.0f;
-
-	POINT mLastMousePos;
-};
+#include "Game.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 	PSTR cmdLine, int showCmd)
@@ -132,7 +10,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 
 	try
 	{
-		A1App theApp(hInstance);
+		Game theApp(hInstance);
 		if (!theApp.Initialize())
 			return 0;
 
@@ -145,18 +23,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
 	}
 }
 
-A1App::A1App(HINSTANCE hInstance)
+Game::Game(HINSTANCE hInstance)
 	: D3DApp(hInstance)
 {
 }
 
-A1App::~A1App()
+Game::~Game()
 {
 	if (md3dDevice != nullptr)
 		FlushCommandQueue();
 }
 
-bool A1App::Initialize()
+bool Game::Initialize()
 {
 	if (!D3DApp::Initialize())
 		return false;
@@ -189,7 +67,7 @@ bool A1App::Initialize()
 	return true;
 }
 
-void A1App::OnResize()
+void Game::OnResize()
 {
 	D3DApp::OnResize();
 
@@ -198,10 +76,11 @@ void A1App::OnResize()
 	XMStoreFloat4x4(&mProj, P);
 }
 
-void A1App::Update(const GameTimer& gt)
+void Game::Update(const GameTimer& gt)
 {
 	OnKeyboardInput(gt);
 	UpdateCamera(gt);
+	world->Update(gt);
 
 	// Cycle through the circular frame resource array.
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
@@ -222,7 +101,7 @@ void A1App::Update(const GameTimer& gt)
 	UpdateMainPassCB(gt);
 }
 
-void A1App::Draw(const GameTimer& gt)
+void Game::Draw(const GameTimer& gt)
 {
 	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 
@@ -256,13 +135,13 @@ void A1App::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(2, passCB->GetGPUVirtualAddress());
 
-	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Opaque]);
+	DrawRenderItems(mCommandList.Get(), world->mRitemLayer[(int)RenderLayer::Opaque]);
 
 	mCommandList->SetPipelineState(mPSOs["alphaTested"].Get());
-	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::AlphaTested]);
+	DrawRenderItems(mCommandList.Get(), world->mRitemLayer[(int)RenderLayer::AlphaTested]);
 
 	mCommandList->SetPipelineState(mPSOs["transparent"].Get());
-	DrawRenderItems(mCommandList.Get(), mRitemLayer[(int)RenderLayer::Transparent]);
+	DrawRenderItems(mCommandList.Get(), world->mRitemLayer[(int)RenderLayer::Transparent]);
 
 	// Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
@@ -289,7 +168,7 @@ void A1App::Draw(const GameTimer& gt)
 	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
 }
 
-void A1App::OnMouseDown(WPARAM btnState, int x, int y)
+void Game::OnMouseDown(WPARAM btnState, int x, int y)
 {
 	mLastMousePos.x = x;
 	mLastMousePos.y = y;
@@ -297,73 +176,24 @@ void A1App::OnMouseDown(WPARAM btnState, int x, int y)
 	SetCapture(mhMainWnd);
 }
 
-void A1App::OnMouseUp(WPARAM btnState, int x, int y)
+void Game::OnMouseUp(WPARAM btnState, int x, int y)
 {
 	ReleaseCapture();
 }
 
-void A1App::OnMouseMove(WPARAM btnState, int x, int y)
+void Game::OnMouseMove(WPARAM btnState, int x, int y)
 {
-	//if ((btnState & MK_LBUTTON) != 0)
-	//{
-	//	// Make each pixel correspond to a quarter of a degree.
-	//	float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
-	//	float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-	//	// Update angles based on input to orbit camera around box.
-	//	mTheta -= dx;
-	//	mPhi -= dy;
-
-	//	// Restrict the angle mPhi.
-	//	mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
-	//}
-	//else if ((btnState & MK_RBUTTON) != 0)
-	//{
-	//	// Make each pixel correspond to 0.2 unit in the scene.
-	//	float dx = 0.2f * static_cast<float>(x - mLastMousePos.x);
-	//	float dy = 0.2f * static_cast<float>(y - mLastMousePos.y);
-
-	//	// Update the camera radius based on input.
-	//	mRadius += dx - dy;
-
-	//	// Restrict the radius.
-	//	mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
-	//}
-
-	//mLastMousePos.x = x;
-	//mLastMousePos.y = y;
 }
 
-void A1App::OnKeyboardInput(const GameTimer& gt)
+void Game::OnKeyboardInput(const GameTimer& gt)
 {
-	if (d3dUtil::IsKeyDown(0x41))
-	{
-		mEyePos.x = mEyePos.x + 10;
-	}
+	
 
-	if (d3dUtil::IsKeyDown(0x53))
-	{
-		mEyePos.z = mEyePos.z - 10;
-	}
-
-	if (d3dUtil::IsKeyDown(0x44))
-	{
-		mEyePos.x = mEyePos.x - 10;
-	}
-
-	if (d3dUtil::IsKeyDown(0x57))
-	{
-		mEyePos.z = mEyePos.z + 10;
-	}
 }
 
-void A1App::UpdateCamera(const GameTimer& gt)
+void Game::UpdateCamera(const GameTimer& gt)
 {
-	// Convert Spherical to Cartesian coordinates.
-	//mEyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
-	//mEyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
-	//mEyePos.y = mRadius * cosf(mPhi);
-
 	// Build the view matrix.
 	XMVECTOR pos = XMVectorSet(0, 100, 0, 1.0f);
 	XMVECTOR target = XMVectorZero();
@@ -373,10 +203,10 @@ void A1App::UpdateCamera(const GameTimer& gt)
 	XMStoreFloat4x4(&mView, view);
 }
 
-void A1App::UpdateObjectCBs(const GameTimer& gt)
+void Game::UpdateObjectCBs(const GameTimer& gt)
 {
 	auto currObjectCB = mCurrFrameResource->ObjectCB.get();
-	for (auto& e : mAllRitems)
+	for (auto& e : world->mAllRitems)
 	{
 		// Only update the cbuffer data if the constants have changed.  
 		// This needs to be tracked per frame resource.
@@ -397,10 +227,10 @@ void A1App::UpdateObjectCBs(const GameTimer& gt)
 	}
 }
 
-void A1App::UpdateMaterialCBs(const GameTimer& gt)
+void Game::UpdateMaterialCBs(const GameTimer& gt)
 {
 	auto currMaterialCB = mCurrFrameResource->MaterialCB.get();
-	for (auto& e : mMaterials)
+	for (auto& e : world->mMaterials)
 	{
 		// Only update the cbuffer data if the constants have changed.  If the cbuffer
 		// data changes, it needs to be updated for each FrameResource.
@@ -423,7 +253,7 @@ void A1App::UpdateMaterialCBs(const GameTimer& gt)
 	}
 }
 
-void A1App::UpdateMainPassCB(const GameTimer& gt)
+void Game::UpdateMainPassCB(const GameTimer& gt)
 {
 	XMMATRIX view = XMLoadFloat4x4(&mView);
 	XMMATRIX proj = XMLoadFloat4x4(&mProj);
@@ -464,27 +294,27 @@ void A1App::UpdateMainPassCB(const GameTimer& gt)
 	currPassCB->CopyData(0, mMainPassCB);
 }
 
-void A1App::LoadTextures()
+void Game::LoadTextures()
 {
 	// MAT1
-	auto LandMatTex = std::make_unique<Texture>();
-	LandMatTex->Name = "LandMatTex";
-	LandMatTex->Filename = L"Textures/Desert.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), LandMatTex->Filename.c_str(),
-		LandMatTex->Resource, LandMatTex->UploadHeap));
-	mTextures[LandMatTex->Name] = std::move(LandMatTex);
-
-	auto JetMatTex = std::make_unique<Texture>();
-	JetMatTex->Name = "JetMatTex";
-	JetMatTex->Filename = L"Textures/Raptor.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), JetMatTex->Filename.c_str(),
-		JetMatTex->Resource, JetMatTex->UploadHeap));
-	mTextures[JetMatTex->Name] = std::move(JetMatTex);
+	LoadTex("LandTex", L"Textures/Desert.dds");
+	LoadTex("JetTex", L"Textures/Raptor.dds");
+	LoadTex("Jet2Tex", L"Textures/Eagle.dds");
+	LoadTex("GrassTex", L"Textures/grass.dds");
 }
 
-void A1App::BuildRootSignature()
+void Game::LoadTex(std::string name, std::wstring path)
+{
+	std::unique_ptr<Texture> Tex = std::make_unique<Texture>();
+	Tex->Name = name;
+	Tex->Filename = path;
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+		mCommandList.Get(), Tex->Filename.c_str(),
+		Tex->Resource, Tex->UploadHeap));
+	mTextures[Tex->Name] = std::move(Tex);
+}
+
+void Game::BuildRootSignature()
 {
 	CD3DX12_DESCRIPTOR_RANGE texTable;
 	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
@@ -524,11 +354,11 @@ void A1App::BuildRootSignature()
 		IID_PPV_ARGS(mRootSignature.GetAddressOf())));
 }
 
-void A1App::BuildDescriptorHeaps()
+void Game::BuildDescriptorHeaps()
 {
 	// Create the SRV heap.
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = 2;
+	srvHeapDesc.NumDescriptors = mTextures.size()+1;
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -536,27 +366,50 @@ void A1App::BuildDescriptorHeaps()
 	// Fill out the heap with actual descriptors.
 	CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-	auto LandMatTex = mTextures["LandMatTex"]->Resource;
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = LandMatTex->GetDesc().Format;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MostDetailedMip = 0;
 	srvDesc.Texture2D.MipLevels = -1;
-	md3dDevice->CreateShaderResourceView(LandMatTex.Get(), &srvDesc, hDescriptor);
 
+
+	auto LandTex = mTextures["LandTex"]->Resource;
+	srvDesc.Format = LandTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(LandTex.Get(), &srvDesc, hDescriptor);
+	
+	// next descriptor
+	auto JetTex = mTextures["JetTex"]->Resource;
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	srvDesc.Format = JetTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(JetTex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	auto Jet2Tex = mTextures["Jet2Tex"]->Resource;
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	srvDesc.Format = Jet2Tex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(Jet2Tex.Get(), &srvDesc, hDescriptor);
+
+	// next descriptor
+	auto GrassTex = mTextures["GrassTex"]->Resource;
+	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+	srvDesc.Format = GrassTex->GetDesc().Format;
+	md3dDevice->CreateShaderResourceView(GrassTex.Get(), &srvDesc, hDescriptor);
 
 	// MAT2
-	// next descriptor
-	auto JetMatTex = mTextures["JetMatTex"]->Resource;
-	hDescriptor.Offset(1, mCbvSrvDescriptorSize);
-	srvDesc.Format = JetMatTex->GetDesc().Format;
-	md3dDevice->CreateShaderResourceView(JetMatTex.Get(), &srvDesc, hDescriptor);
+	//int count = 0;
+	//for (auto t = mTextures.begin(); t != mTextures.end(); ++t)
+	//{
+	//	auto Tex = t->second->Resource;
+	//	if (count != 0) { hDescriptor.Offset(1, mCbvSrvDescriptorSize); }
+	//	srvDesc.Format = Tex->GetDesc().Format;
+	//	md3dDevice->CreateShaderResourceView(Tex.Get(), &srvDesc, hDescriptor);
+	//	count++;
+	//}
 
 }
 
-void A1App::BuildShadersAndInputLayout()
+void Game::BuildShadersAndInputLayout()
 {
 	const D3D_SHADER_MACRO defines[] =
 	{
@@ -586,14 +439,14 @@ void A1App::BuildShadersAndInputLayout()
 }
 
 
-void A1App::helpBuildSubMesh(GeometryGenerator::MeshData name, SubmeshGeometry& subName, UINT nameVertexOffset, UINT nameIndexOffset)
+void Game::helpBuildSubMesh(GeometryGenerator::MeshData name, SubmeshGeometry& subName, UINT nameVertexOffset, UINT nameIndexOffset)
 {
 	subName.IndexCount = (UINT)name.Indices32.size();
 	subName.StartIndexLocation = nameIndexOffset;
 	subName.BaseVertexLocation = nameVertexOffset;
 }
 
-void A1App::BuildPSOs()
+void Game::BuildPSOs()
 {
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc;
 
@@ -682,34 +535,60 @@ void A1App::BuildPSOs()
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&alphaTestedPsoDesc, IID_PPV_ARGS(&mPSOs["alphaTested"])));
 }
 
-void A1App::BuildFrameResources()
+void Game::BuildFrameResources()
 {
 	for (int i = 0; i < gNumFrameResources; ++i)
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(),
-			1, (UINT)mAllRitems.size(), (UINT)mMaterials.size()));
+			1, (UINT)world->mAllRitems.size(), (UINT)world->mMaterials.size()));
 	}
 }
 
-void A1App::BuildMaterials()
+void Game::BuildMaterials()
 {
 	// MAT3
+	//int count = 0;
+	//for (auto t = mTextures.begin(); t != mTextures.end(); ++t)
+	//{
+	//	auto Mat = std::make_unique<Material>();
+	//	Mat->Name = t->first;
+	//	Mat->MatCBIndex = count;
+	//	Mat->DiffuseSrvHeapIndex = count;
+	//	Mat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	//	mMaterials[t->first] = std::move(Mat);
+	//	count++;
+	//}
+
 	auto LandMat = std::make_unique<Material>();
 	LandMat->Name = "LandMat";
 	LandMat->MatCBIndex = 0;
 	LandMat->DiffuseSrvHeapIndex = 0;
 	LandMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	mMaterials["LandMat"] = std::move(LandMat);
+	world->mMaterials["LandMat"] = std::move(LandMat);
 
 	auto JetMat = std::make_unique<Material>();
 	JetMat->Name = "JetMat";
 	JetMat->MatCBIndex = 1;
 	JetMat->DiffuseSrvHeapIndex = 1;
 	JetMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	mMaterials["JetMat"] = std::move(JetMat);
+	world->mMaterials["JetMat"] = std::move(JetMat);
+
+	auto Jet2Mat = std::make_unique<Material>();
+	Jet2Mat->Name = "Jet2Mat";
+	Jet2Mat->MatCBIndex = 2;
+	Jet2Mat->DiffuseSrvHeapIndex = 2;
+	Jet2Mat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	world->mMaterials["Jet2Mat"] = std::move(Jet2Mat);
+
+	auto GrassMat = std::make_unique<Material>();
+	GrassMat->Name = "GrassMat";
+	GrassMat->MatCBIndex = 3;
+	GrassMat->DiffuseSrvHeapIndex = 3;
+	GrassMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+	world->mMaterials["GrassMat"] = std::move(GrassMat);
 }
 
-void A1App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
+void Game::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems)
 {
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
@@ -743,7 +622,7 @@ void A1App::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vecto
 	}
 }
 
-std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> A1App::GetStaticSamplers()
+std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> Game::GetStaticSamplers()
 {
 	// Applications usually only need a handful of samplers.  So just define them all up front
 	// and keep them available as part of the root signature.  
@@ -800,12 +679,12 @@ std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> A1App::GetStaticSamplers()
 		anisotropicWrap, anisotropicClamp };
 }
 
-float A1App::GetHillsHeight(float x, float z)const
+float Game::GetHillsHeight(float x, float z)const
 {
 	return 0.3f * (z * sinf(0.1f * x) + x * cosf(0.1f * z));
 }
 
-XMFLOAT3 A1App::GetHillsNormal(float x, float z)const
+XMFLOAT3 Game::GetHillsNormal(float x, float z)const
 {
 	// n = (-df/dx, 1, -df/dz)
 	XMFLOAT3 n(
@@ -819,41 +698,34 @@ XMFLOAT3 A1App::GetHillsNormal(float x, float z)const
 	return n;
 }
 
-void A1App::BuildShapeGeometry()
+void Game::BuildShapeGeometry()
 {
 	GeometryGenerator geoGen;
-	GeometryGenerator::MeshData grid = geoGen.CreateGrid(50.0f, 50.0f, 10, 10);
 
-
-	// Cache the vertex offsets to each object in the concatenated vertex buffer.
-
+	GeometryGenerator::MeshData grid = geoGen.CreateGrid(50.0f, 50.0f, 2, 2);
 	UINT gridVertexOffset = 0;
-	// = (UINT)prev.Vertices.size();
-
-
-	// Cache the starting index for each object in the concatenated index buffer.
 	UINT gridIndexOffset = 0;
-
-
-	// Define the SubmeshGeometry that cover different
-	// regions of the vertex/index buffers.
-
 	SubmeshGeometry gridSubmesh;
 	gridSubmesh.IndexCount = (UINT)grid.Indices32.size();
 	gridSubmesh.StartIndexLocation = gridIndexOffset;
 	gridSubmesh.BaseVertexLocation = gridVertexOffset;
 
-	// Extract the vertex elements we are interested in and pack the
-	// vertices of all the meshes into one vertex buffer.
+	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 0);
+	UINT boxVertexOffset = (UINT)grid.Vertices.size();
+	UINT boxIndexOffset = (UINT)grid.Indices32.size();
+	SubmeshGeometry boxSubmesh;
+	boxSubmesh.IndexCount = (UINT)box.Indices32.size();
+	boxSubmesh.StartIndexLocation = boxIndexOffset;
+	boxSubmesh.BaseVertexLocation = boxVertexOffset;
 
 	auto totalVertexCount =
-		grid.Vertices.size()
+		grid.Vertices.size()+
+		box.Vertices.size()
 		;
 
 	std::vector<Vertex> vertices(totalVertexCount);
 
 	UINT k = 0;
-
 	for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
 	{
 		vertices[k].Pos = grid.Vertices[i].Position;
@@ -861,10 +733,17 @@ void A1App::BuildShapeGeometry()
 		vertices[k].TexC = grid.Vertices[i].TexC;
 	}
 
+	for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
+	{
+		vertices[k].Pos = box.Vertices[i].Position;
+		vertices[k].Normal = box.Vertices[i].Normal;
+		vertices[k].TexC = box.Vertices[i].TexC;
+	}
 
 	std::vector<std::uint16_t> indices;
 
 	indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
+	indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
 
 	// Stop here
 	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
@@ -891,36 +770,15 @@ void A1App::BuildShapeGeometry()
 	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
 	geo->IndexBufferByteSize = ibByteSize;
 
-	geo->DrawArgs["Quad"] = gridSubmesh;
+	geo->DrawArgs["Grid"] = gridSubmesh;
+	geo->DrawArgs["Box"] = boxSubmesh;
 
-	mGeometries[geo->Name] = std::move(geo);
+	world->mGeometries[geo->Name] = std::move(geo);
 }
 
-void A1App::BuildShapeRenderItems()
+void Game::BuildShapeRenderItems()
 {
-	auto landRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&landRitem->World, XMMatrixScaling(2.5f, 1.0f, 2.5f) * XMMatrixTranslation(0.0f, 0.0f, 0.0f));
-	landRitem->ObjCBIndex = 0;
-	landRitem->Mat = mMaterials["LandMat"].get();
-	landRitem->Geo = mGeometries["shapeGeo"].get();
-	//landRitem->World = MathHelper::Identity4x4();
-	landRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	landRitem->IndexCount = landRitem->Geo->DrawArgs["Quad"].IndexCount;
-	landRitem->StartIndexLocation = landRitem->Geo->DrawArgs["Quad"].StartIndexLocation;
-	landRitem->BaseVertexLocation = landRitem->Geo->DrawArgs["Quad"].BaseVertexLocation;
-	mRitemLayer[(int)RenderLayer::Opaque].push_back(landRitem.get());
-	mAllRitems.push_back(std::move(landRitem));
+	world->buildWorld();
 
-	auto JetRitem = std::make_unique<RenderItem>();
-	XMStoreFloat4x4(&JetRitem->World, XMMatrixScaling(0.2f, 1.0f, 0.2f) * XMMatrixTranslation(0.0f, 0.1f, -30.0f));
-	JetRitem->ObjCBIndex = 1;
-	JetRitem->Mat = mMaterials["JetMat"].get();
-	JetRitem->Geo = mGeometries["shapeGeo"].get();
-	JetRitem->PrimitiveType = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-	JetRitem->IndexCount = JetRitem->Geo->DrawArgs["Quad"].IndexCount;
-	JetRitem->StartIndexLocation = JetRitem->Geo->DrawArgs["Quad"].StartIndexLocation;
-	JetRitem->BaseVertexLocation = JetRitem->Geo->DrawArgs["Quad"].BaseVertexLocation;
-	mRitemLayer[(int)RenderLayer::Transparent].push_back(JetRitem.get());
-	mAllRitems.push_back(std::move(JetRitem));
 
 }
